@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   GearSixIcon,
@@ -11,32 +12,41 @@ import {
 } from "@phosphor-icons/react";
 import type { Icon, IconWeight } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
+import { DownloadsTable } from "@/components/downloads-table";
 
 export const Route = createFileRoute("/")({
   component: Index,
 });
 
 function Index() {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const hasSelection = selected.size > 0;
+
   return (
-    <div>
-      <ActionBar />
+    <div className="flex h-full flex-col">
+      <ActionBar hasSelection={hasSelection} />
+      <DownloadsTable selected={selected} onSelectedChange={setSelected} />
     </div>
   );
 }
 
-function ActionBar() {
+function ActionBar({ hasSelection }: { hasSelection: boolean }) {
   return (
-    <div className="flex items-center justify-between border-b px-2 py-1">
+    <div className="flex shrink-0 items-center justify-between border-b px-2 py-1">
       <div className="flex items-center gap-1">
         <ActionButton icon={PlusIcon} label="New URL" weight="bold" />
-        <ActionButton icon={PlayIcon} label="Resume" disabled />
-        <ActionButton icon={StopIcon} label="Stop" disabled />
-        <ActionButton icon={TrashIcon} label="Delete" disabled />
+        <ActionButton icon={PlayIcon} label="Resume" disabled={!hasSelection} />
+        <ActionButton icon={StopIcon} label="Stop" disabled={!hasSelection} />
+        <ActionButton
+          icon={TrashIcon}
+          label="Delete"
+          disabled={!hasSelection}
+        />
       </div>
 
       <div className="flex items-center gap-1">
         <ActionButton icon={GearSixIcon} label="Settings" />
-        <ActionButton icon={GlobeIcon} label="Extension" />
+        <ActionButton icon={GlobeIcon} label="Browser" />
         <ActionButton icon={HandHeartIcon} label="Donate" />
         <ActionButton icon={PowerIcon} label="Quit" />
       </div>
@@ -58,8 +68,8 @@ function ActionButton({
   return (
     <Button
       variant="ghost"
-      className="h-auto flex-col gap-1 rounded-lg px-2.5 py-1.5"
       disabled={disabled}
+      className="h-auto flex-col gap-0.5 rounded-lg px-2.5 py-1.5 opacity-80 hover:opacity-100"
     >
       <Icon className="size-7" weight={weight} />
       <span className="text-[10px] leading-none text-muted-foreground">

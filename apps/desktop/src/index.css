@@ -121,6 +121,19 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    -webkit-user-select: none;
+    user-select: none;
+    }
+  *::-webkit-scrollbar {
+    display: none;
+    }
+  input,
+  textarea,
+  [contenteditable="true"] {
+    -webkit-user-select: text;
+    user-select: text;
     }
   body {
     @apply bg-background text-foreground;

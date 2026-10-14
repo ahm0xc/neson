@@ -10,6 +10,16 @@ import {
 import type { Icon } from "@phosphor-icons/react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { cn } from "cn"
+import type { Download } from "@/lib/bindings/Download"
+import type { DownloadProgress } from "@/lib/bindings/DownloadProgress"
+import type { DownloadStatus } from "@/lib/bindings/DownloadStatus"
+import {
+  formatBytes,
+  formatDate,
+  formatEta,
+  formatPercent,
+  formatSpeed,
+} from "@/lib/format"
 
 const archiveExtensions = ["zip", "tar", "gz", "zst", "rar", "7z", "xz", "bz2"]
 const imageExtensions = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "tiff"]
@@ -27,182 +37,6 @@ function fileIconFor(name: string): Icon {
   if (ext === "pdf") return FilePdfIcon
   return FileIcon
 }
-
-export type DownloadStatus =
-  | "downloading"
-  | "completed"
-  | "paused"
-  | "queued"
-  | "error"
-
-export interface Download {
-  id: string
-  name: string
-  url: string
-  status: DownloadStatus
-  progress: number
-  downloaded: string
-  size: string
-  speed: string
-  addedAt: string
-}
-
-export const downloads: Download[] = [
-  {
-    id: "1",
-    name: "ubuntu-24.04-desktop-amd64.iso",
-    url: "https://releases.ubuntu.com/24.04/ubuntu-24.04-desktop-amd64.iso",
-    status: "downloading",
-    progress: 62,
-    downloaded: "3.1 GB",
-    size: "5.0 GB",
-    speed: "12.4 MB/s",
-    addedAt: "14 Oct 2026",
-  },
-  {
-    id: "2",
-    name: "blender-4.2.0-macos-arm64.dmg",
-    url: "https://download.blender.org/release/Blender4.2/blender-4.2.0-macos-arm64.dmg",
-    status: "completed",
-    progress: 100,
-    downloaded: "312 MB",
-    size: "312 MB",
-    speed: "—",
-    addedAt: "14 Oct 2026",
-  },
-  {
-    id: "3",
-    name: "sintel-4k.mkv",
-    url: "https://download.blender.org/demo/movies/sintel-4k.mkv",
-    status: "paused",
-    progress: 27,
-    downloaded: "1.9 GB",
-    size: "6.9 GB",
-    speed: "—",
-    addedAt: "14 Oct 2026",
-  },
-  {
-    id: "4",
-    name: "node-v22.11.0-darwin-arm64.tar.gz",
-    url: "https://nodejs.org/dist/v22.11.0/node-v22.11.0-darwin-arm64.tar.gz",
-    status: "queued",
-    progress: 0,
-    downloaded: "0 B",
-    size: "38 MB",
-    speed: "—",
-    addedAt: "14 Oct 2026",
-  },
-  {
-    id: "5",
-    name: "debian-12.7.0-amd64-netinst.iso",
-    url: "https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/debian-12.7.0-amd64-netinst.iso",
-    status: "downloading",
-    progress: 88,
-    downloaded: "560 MB",
-    size: "635 MB",
-    speed: "8.1 MB/s",
-    addedAt: "14 Oct 2026",
-  },
-  {
-    id: "6",
-    name: "dataset-imagenet-subset.zip",
-    url: "https://example.com/datasets/imagenet-subset.zip",
-    status: "error",
-    progress: 41,
-    downloaded: "2.4 GB",
-    size: "5.9 GB",
-    speed: "—",
-    addedAt: "14 Oct 2026",
-  },
-  {
-    id: "7",
-    name: "firefox-131.0.en-US.mac.dmg",
-    url: "https://download.mozilla.org/?product=firefox-latest",
-    status: "completed",
-    progress: 100,
-    downloaded: "134 MB",
-    size: "134 MB",
-    speed: "—",
-    addedAt: "13 Oct 2026",
-  },
-  {
-    id: "8",
-    name: "docker-4.34.3.dmg",
-    url: "https://desktop.docker.com/mac/main/arm64/Docker.dmg",
-    status: "completed",
-    progress: 100,
-    downloaded: "528 MB",
-    size: "528 MB",
-    speed: "—",
-    addedAt: "13 Oct 2026",
-  },
-  {
-    id: "9",
-    name: "llama-3.1-8b-instruct.gguf",
-    url: "https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct/resolve/main/model.gguf",
-    status: "downloading",
-    progress: 14,
-    downloaded: "680 MB",
-    size: "4.9 GB",
-    speed: "22.7 MB/s",
-    addedAt: "13 Oct 2026",
-  },
-  {
-    id: "10",
-    name: "gimp-2.10.38.dmg",
-    url: "https://download.gimp.org/mirror/pub/gimp/v2.10/gimp-2.10.38.dmg",
-    status: "queued",
-    progress: 0,
-    downloaded: "0 B",
-    size: "248 MB",
-    speed: "—",
-    addedAt: "12 Oct 2026",
-  },
-  {
-    id: "11",
-    name: "steam.dmg",
-    url: "https://cdn.cloudflare.steamstatic.com/client/installer/steam.dmg",
-    status: "completed",
-    progress: 100,
-    downloaded: "4.2 MB",
-    size: "4.2 MB",
-    speed: "—",
-    addedAt: "11 Oct 2026",
-  },
-  {
-    id: "12",
-    name: "kali-linux-2024.3-installer-amd64.iso",
-    url: "https://cdimage.kali.org/kali-2024.3/kali-linux-2024.3-installer-amd64.iso",
-    status: "paused",
-    progress: 73,
-    downloaded: "2.9 GB",
-    size: "4.0 GB",
-    speed: "—",
-    addedAt: "10 Oct 2026",
-  },
-  {
-    id: "13",
-    name: "archive-old-backup.tar.zst",
-    url: "https://backups.example.com/archive-old-backup.tar.zst",
-    status: "error",
-    progress: 0,
-    downloaded: "0 B",
-    size: "12.4 GB",
-    speed: "—",
-    addedAt: "09 Oct 2026",
-  },
-  {
-    id: "14",
-    name: "vscode-darwin-arm64.zip",
-    url: "https://update.code.visualstudio.com/latest/darwin-arm64/stable",
-    status: "completed",
-    progress: 100,
-    downloaded: "96 MB",
-    size: "96 MB",
-    speed: "—",
-    addedAt: "07 Oct 2026",
-  },
-]
 
 const statusStyles: Record<DownloadStatus, string> = {
   downloading:
@@ -231,9 +65,13 @@ const progressStyles: Record<DownloadStatus, string> = {
 }
 
 export function DownloadsTable({
+  downloads,
+  progress,
   selected,
   onSelectedChange,
 }: {
+  downloads: Download[]
+  progress: Record<string, DownloadProgress>
   selected: Set<string>
   onSelectedChange: (ids: Set<string>) => void
 }) {
@@ -257,9 +95,29 @@ export function DownloadsTable({
           <col className="w-24" />
         </colgroup>
         <tbody>
+          {downloads.length === 0 && (
+            <tr>
+              <td
+                colSpan={7}
+                className="px-3 py-16 text-center text-muted-foreground"
+              >
+                No downloads yet. Click “New URL” to add one.
+              </td>
+            </tr>
+          )}
           {downloads.map((download) => {
             const isSelected = selected.has(download.id)
-            const ItemIcon = fileIconFor(download.name)
+            const ItemIcon = fileIconFor(download.filename)
+            const live = progress[download.id]
+            const downloadedBytes =
+              live?.downloaded_bytes ?? download.downloaded_bytes
+            const totalBytes = live?.total_bytes ?? download.total_bytes
+            const percent = formatPercent(downloadedBytes, totalBytes)
+            const hasTotal = totalBytes != null && totalBytes > 0
+            const isStreaming = download.status === "downloading"
+            const speed = isStreaming ? formatSpeed(live?.speed_bps) : "—"
+            const eta = isStreaming ? formatEta(live?.eta_secs) : null
+
             return (
               <tr
                 key={download.id}
@@ -274,7 +132,7 @@ export function DownloadsTable({
                   onClick={(event) => event.stopPropagation()}
                 >
                   <Checkbox
-                    aria-label={`Select ${download.name}`}
+                    aria-label={`Select ${download.filename}`}
                     checked={isSelected}
                     onCheckedChange={() => toggle(download.id)}
                   />
@@ -287,7 +145,10 @@ export function DownloadsTable({
                     />
                     <div className="min-w-0 flex-1 text-left">
                       <div className="truncate font-medium">
-                        {download.name}
+                        {download.filename}
+                      </div>
+                      <div className="truncate text-[10px] text-muted-foreground/70">
+                        {download.error ?? download.url}
                       </div>
                     </div>
                   </div>
@@ -303,8 +164,7 @@ export function DownloadsTable({
                   </span>
                 </td>
                 <td className="px-3 py-2">
-                  {download.status === "downloading" ||
-                  download.status === "error" ? (
+                  {hasTotal ? (
                     <div className="flex items-center gap-2">
                       <div className="h-1 w-14 overflow-hidden rounded-full bg-muted">
                         <div
@@ -312,11 +172,11 @@ export function DownloadsTable({
                             "h-full rounded-full transition-[width]",
                             progressStyles[download.status]
                           )}
-                          style={{ width: `${download.progress}%` }}
+                          style={{ width: `${percent}%` }}
                         />
                       </div>
                       <span className="w-7 text-right text-[10px] tabular-nums text-muted-foreground">
-                        {download.progress}%
+                        {percent}%
                       </span>
                     </div>
                   ) : (
@@ -324,18 +184,25 @@ export function DownloadsTable({
                   )}
                 </td>
                 <td className="px-3 py-2 text-right text-muted-foreground">
-                  <div className="truncate tabular-nums">{download.size}</div>
+                  <div className="truncate tabular-nums">
+                    {formatBytes(totalBytes)}
+                  </div>
                   {download.status !== "completed" && (
                     <div className="truncate text-[10px] tabular-nums text-muted-foreground/70">
-                      {download.downloaded}
+                      {formatBytes(downloadedBytes)}
                     </div>
                   )}
                 </td>
                 <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
-                  <div className="truncate">{download.speed}</div>
+                  <div className="truncate">{speed}</div>
+                  {eta && (
+                    <div className="truncate text-[10px] text-muted-foreground/70">
+                      {eta}
+                    </div>
+                  )}
                 </td>
                 <td className="px-3 py-2 text-right text-muted-foreground">
-                  <div className="truncate">{download.addedAt}</div>
+                  <div className="truncate">{formatDate(download.added_at)}</div>
                 </td>
               </tr>
             )

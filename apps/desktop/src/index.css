@@ -4,7 +4,7 @@
 @import "@fontsource-variable/roboto";
 @import "@fontsource-variable/geist";
 
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark (&:is(.dark, .dark *));
 
 :root {
     --background: oklch(1 0 0);

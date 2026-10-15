@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AddDownloadRequest, Download, DownloadProgress, Settings } from "./bindings";
+import type { AddDownloadRequest, BridgeInfo, Download, DownloadProgress, Settings } from "./bindings";
 
 export const DOWNLOAD_EVENTS = {
   progress: "download://progress",
@@ -19,6 +19,7 @@ export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   setSettings: (settings: Settings) =>
     invoke<Settings>("set_settings", { settings }),
+  getBridgeInfo: () => invoke<BridgeInfo>("get_bridge_info"),
 };
 
 export function onDownloadProgress(

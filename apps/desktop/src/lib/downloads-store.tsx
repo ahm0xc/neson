@@ -4,12 +4,23 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import type { ReactNode } from "react";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { Download, DownloadProgress } from "./bindings";
 import { api, onDownloadChanged, onDownloadProgress } from "./api";
-import { openDownloadWindow } from "./windows";
+import { isTauri, openDownloadWindow } from "./windows";
+
+function currentWindowIsMain(): boolean {
+  if (!isTauri()) return false;
+  try {
+    return getCurrentWebviewWindow().label === "main";
+  } catch {
+    return false;
+  }
+}
 
 interface DownloadsContextValue {
   downloads: Download[];
@@ -34,6 +45,8 @@ function upsert(list: Download[], item: Download): Download[] {
 export function DownloadsProvider({ children }: { children: ReactNode }) {
   const [downloads, setDownloads] = useState<Download[]>([]);
   const [progress, setProgress] = useState<Record<string, DownloadProgress>>({});
+  const knownIds = useRef<Set<string>>(new Set());
+  const isMainWindow = useRef(currentWindowIsMain());
 
   useEffect(() => {
     let disposed = false;
@@ -42,15 +55,24 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
     void (async () => {
       try {
         const initial = await api.listDownloads();
-        if (!disposed) setDownloads(initial);
+        if (!disposed) {
+          knownIds.current = new Set(initial.map((download) => download.id));
+          setDownloads(initial);
+        }
       } catch (error) {
         console.error("failed to load downloads", error);
       }
 
       unlisteners.push(
-        await onDownloadChanged((download) =>
-          setDownloads((prev) => upsert(prev, download)),
-        ),
+        await onDownloadChanged((download) => {
+          const isNew = !knownIds.current.has(download.id);
+          knownIds.current.add(download.id);
+          setDownloads((prev) => upsert(prev, download));
+          // A download added elsewhere (e.g. the browser bridge) should pop
+          // its own window. Only the main window opens windows; other windows
+          // would otherwise open duplicates of each other.
+          if (isNew && isMainWindow.current) void openDownloadWindow(download.id);
+        }),
       );
       unlisteners.push(
         await onDownloadProgress((item) =>
@@ -71,6 +93,7 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
       filename: filename ?? null,
       dir: null,
     });
+    knownIds.current.add(download.id);
     setDownloads((prev) => upsert(prev, download));
     void openDownloadWindow(download.id);
     return download;

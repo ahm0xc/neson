@@ -1,3 +1,4 @@
+mod bridge;
 mod commands;
 mod db;
 mod engine;
@@ -8,6 +9,7 @@ use std::sync::Arc;
 
 use tauri::Manager as _;
 
+use crate::bridge::{BridgeState, DEFAULT_BRIDGE_PORT, SETTINGS_BRIDGE_PORT};
 use crate::db::Db;
 use crate::engine::Manager;
 
@@ -34,8 +36,28 @@ pub fn run() {
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(DEFAULT_MAX_ACTIVE);
 
+            let requested_port = db
+                .get_setting(SETTINGS_BRIDGE_PORT)?
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(DEFAULT_BRIDGE_PORT);
+
             let manager = Arc::new(Manager::new(handle, db, default_dir, max_active)?);
             app.manage(Arc::clone(&manager));
+            app.manage(BridgeState::default());
+
+            match bridge::start(Arc::clone(&manager), requested_port) {
+                Ok(port) => {
+                    if port != requested_port {
+                        let _ = manager
+                            .db()
+                            .set_setting(SETTINGS_BRIDGE_PORT, &port.to_string());
+                    }
+                    *app.state::<BridgeState>().port.lock().unwrap() = Some(port);
+                    println!("[neson] browser bridge listening on http://127.0.0.1:{port}");
+                }
+                Err(err) => eprintln!("[neson] failed to start browser bridge: {err}"),
+            }
+
             manager.restore()?;
 
             Ok(())
@@ -49,6 +71,7 @@ pub fn run() {
             commands::reorder_downloads,
             commands::get_settings,
             commands::set_settings,
+            commands::get_bridge_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

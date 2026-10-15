@@ -14,6 +14,7 @@ export async function openDownloadWindow(id: string): Promise<void> {
   const label = downloadWindowLabel(id);
   const existing = await WebviewWindow.getByLabel(label);
   if (existing) {
+    await existing.setAlwaysOnTop(true);
     await existing.setFocus();
     return;
   }
@@ -28,6 +29,12 @@ export async function openDownloadWindow(id: string): Promise<void> {
     maximizable: false,
     fullscreen: false,
     center: true,
+    // Float above other windows so the new download is always visible.
+    alwaysOnTop: true,
+  });
+
+  window.once("tauri://created", () => {
+    void window.setAlwaysOnTop(true);
   });
 
   window.once("tauri://error", (event) => {

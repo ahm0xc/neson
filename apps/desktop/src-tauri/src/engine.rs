@@ -9,9 +9,11 @@ use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex as AsyncMutex, watch};
 
+use uuid::Uuid;
+
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
-use crate::models::{Download, DownloadProgress, DownloadStatus};
+use crate::models::{AddDownloadRequest, Download, DownloadProgress, DownloadStatus};
 
 pub const EVENT_PROGRESS: &str = "download://progress";
 pub const EVENT_CHANGED: &str = "download://changed";
@@ -87,12 +89,58 @@ impl Manager {
         Ok(())
     }
 
+    /// Validate a request and queue a new download. Shared by the UI command
+    /// and the local browser bridge so both paths behave identically.
+    pub fn add_download(self: &Arc<Self>, req: &AddDownloadRequest) -> AppResult<Download> {
+        let url = req.url.trim().to_string();
+        if url.is_empty() {
+            return Err(AppError::Message("a URL is required".into()));
+        }
+        reqwest::Url::parse(&url).map_err(|err| AppError::Url(err.to_string()))?;
+
+        let dir = req
+            .dir
+            .clone()
+            .map(|d| d.trim().to_string())
+            .filter(|d| !d.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| self.default_dir().to_path_buf());
+        std::fs::create_dir_all(&dir)?;
+
+        let requested = req
+            .filename
+            .clone()
+            .map(|f| sanitize_filename(f.trim()))
+            .filter(|f| !f.is_empty())
+            .unwrap_or_else(|| filename_from_url(&url));
+        let filename = unique_filename_blocking(&dir, &requested);
+
+        let download = Download {
+            id: Uuid::new_v4().to_string(),
+            url,
+            filename,
+            dir: dir.to_string_lossy().into_owned(),
+            status: DownloadStatus::Queued,
+            total_bytes: None,
+            downloaded_bytes: 0,
+            queue_order: self.db().next_queue_order()?,
+            added_at: chrono::Utc::now().to_rfc3339(),
+            completed_at: None,
+            error: None,
+        };
+
+        self.enqueue(&download)?;
+
+        Ok(self.db.get_download(&download.id)?.unwrap_or(download))
+    }
+
     /// Requeue anything that was mid-flight before the app restarted, then start
     /// as many as the concurrency limit allows.
     pub fn restore(self: &Arc<Self>) -> AppResult<()> {
         for download in self.db.list_downloads()? {
             if download.status == DownloadStatus::Downloading {
-                self.db.set_status(&download.id, DownloadStatus::Queued, None)?;
+                self.db
+                    .set_status(&download.id, DownloadStatus::Queued, None)?;
                 emit_changed(&self.app, self.db.get_download(&download.id)?);
             }
         }
@@ -121,7 +169,10 @@ impl Manager {
                 },
             );
 
-            if let Err(err) = self.db.set_status(&next.id, DownloadStatus::Downloading, None) {
+            if let Err(err) = self
+                .db
+                .set_status(&next.id, DownloadStatus::Downloading, None)
+            {
                 eprintln!("[neson] failed to mark {} downloading: {err}", next.id);
             }
             emit_changed(&self.app, self.db.get_download(&next.id).ok().flatten());

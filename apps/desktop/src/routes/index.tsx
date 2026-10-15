@@ -14,6 +14,7 @@ import {
 } from "@phosphor-icons/react";
 import type { Icon, IconWeight } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
+import { BrowserDialog } from "@/components/browser-dialog";
 import { DownloadsTable } from "@/components/downloads-table";
 import { NewUrlDialog } from "@/components/new-url-dialog";
 import { TitleBar } from "@/components/title-bar";
@@ -34,6 +35,7 @@ function Index() {
   } = useDownloads();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [browserOpen, setBrowserOpen] = useState(false);
 
   const selectedDownloads = useMemo(
     () => downloads.filter((download) => selected.has(download.id)),
@@ -108,6 +110,7 @@ function Index() {
         onDelete={handleDelete}
         onMoveUp={() => handleMove(-1)}
         onMoveDown={() => handleMove(1)}
+        onBrowser={() => setBrowserOpen(true)}
       />
       <DownloadsTable
         downloads={downloads}
@@ -116,6 +119,7 @@ function Index() {
         onSelectedChange={setSelected}
       />
       <NewUrlDialog open={dialogOpen} onOpenChange={setDialogOpen} />
+      <BrowserDialog open={browserOpen} onOpenChange={setBrowserOpen} />
     </div>
   );
 }
@@ -130,6 +134,7 @@ function ActionBar({
   onDelete,
   onMoveUp,
   onMoveDown,
+  onBrowser,
 }: {
   hasSelection: boolean;
   canResume: boolean;
@@ -140,6 +145,7 @@ function ActionBar({
   onDelete: () => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
+  onBrowser: () => void;
 }) {
   return (
     <div className="flex shrink-0 items-center justify-between border-b px-2 py-1">
@@ -184,7 +190,7 @@ function ActionBar({
 
       <div className="flex items-center gap-1">
         <ActionButton icon={GearSixIcon} label="Settings" />
-        <ActionButton icon={GlobeIcon} label="Browser" />
+        <ActionButton icon={GlobeIcon} label="Browser" onClick={onBrowser} />
         <ActionButton icon={HandHeartIcon} label="Donate" />
         <ActionButton icon={PowerIcon} label="Quit" />
       </div>

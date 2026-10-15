@@ -1,0 +1,76 @@
+#root {
+  width: 300px;
+}
+
+.popup {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px 16px;
+}
+
+.popup h1 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.status {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 10px;
+  background: var(--input, #1a1a1a);
+}
+
+.dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--muted, #9a9a9a);
+}
+
+.status.connected .dot {
+  background: #4ade80;
+}
+
+.status.disconnected .dot {
+  background: #f87171;
+}
+
+.status.checking .dot {
+  background: #facc15;
+}
+
+.message {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.message .title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: inherit;
+}
+
+.message .hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted, #9a9a9a);
+}
+
+.status.connected .message .title {
+  color: #4ade80;
+}
+
+.status.disconnected .message .title {
+  color: #f87171;
+}

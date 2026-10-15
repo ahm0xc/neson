@@ -82,3 +82,10 @@ pub struct Settings {
     pub default_dir: String,
     pub max_active: u32,
 }
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct BridgeInfo {
+    pub running: bool,
+    pub port: u16,
+}

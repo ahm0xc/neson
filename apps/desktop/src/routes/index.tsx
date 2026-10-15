@@ -6,10 +6,10 @@ import {
   GearSixIcon,
   GlobeIcon,
   HandHeartIcon,
+  PauseIcon,
   PlayIcon,
   PlusIcon,
   PowerIcon,
-  StopIcon,
   TrashIcon,
 } from "@phosphor-icons/react";
 import type { Icon, IconWeight } from "@phosphor-icons/react";
@@ -43,7 +43,7 @@ function Index() {
   const canResume = selectedDownloads.some(
     (download) => download.status === "paused" || download.status === "error",
   );
-  const canStop = selectedDownloads.some(
+  const canPause = selectedDownloads.some(
     (download) =>
       download.status === "downloading" || download.status === "queued",
   );
@@ -58,7 +58,7 @@ function Index() {
     setSelected(new Set());
   };
 
-  const handleStop = () => {
+  const handlePause = () => {
     for (const download of selectedDownloads) {
       if (download.status === "downloading" || download.status === "queued") {
         void pauseDownload(download.id);
@@ -101,10 +101,10 @@ function Index() {
       <ActionBar
         hasSelection={hasSelection}
         canResume={canResume}
-        canStop={canStop}
+        canPause={canPause}
         onNewUrl={() => setDialogOpen(true)}
         onResume={handleResume}
-        onStop={handleStop}
+        onPause={handlePause}
         onDelete={handleDelete}
         onMoveUp={() => handleMove(-1)}
         onMoveDown={() => handleMove(1)}
@@ -123,20 +123,20 @@ function Index() {
 function ActionBar({
   hasSelection,
   canResume,
-  canStop,
+  canPause,
   onNewUrl,
   onResume,
-  onStop,
+  onPause,
   onDelete,
   onMoveUp,
   onMoveDown,
 }: {
   hasSelection: boolean;
   canResume: boolean;
-  canStop: boolean;
+  canPause: boolean;
   onNewUrl: () => void;
   onResume: () => void;
-  onStop: () => void;
+  onPause: () => void;
   onDelete: () => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
@@ -157,10 +157,10 @@ function ActionBar({
           onClick={onResume}
         />
         <ActionButton
-          icon={StopIcon}
-          label="Stop"
-          disabled={!canStop}
-          onClick={onStop}
+          icon={PauseIcon}
+          label="Pause"
+          disabled={!canPause}
+          onClick={onPause}
         />
         <ActionButton
           icon={TrashIcon}

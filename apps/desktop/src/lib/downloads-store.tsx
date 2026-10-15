@@ -9,6 +9,7 @@ import {
 import type { ReactNode } from "react";
 import type { Download, DownloadProgress } from "./bindings";
 import { api, onDownloadChanged, onDownloadProgress } from "./api";
+import { openDownloadWindow } from "./windows";
 
 interface DownloadsContextValue {
   downloads: Download[];
@@ -17,6 +18,7 @@ interface DownloadsContextValue {
   pauseDownload: (id: string) => Promise<void>;
   resumeDownload: (id: string) => Promise<void>;
   removeDownload: (id: string) => Promise<void>;
+  reorderDownloads: (ids: string[]) => Promise<void>;
 }
 
 const DownloadsContext = createContext<DownloadsContextValue | null>(null);
@@ -70,6 +72,7 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
       dir: null,
     });
     setDownloads((prev) => upsert(prev, download));
+    void openDownloadWindow(download.id);
     return download;
   }, []);
 
@@ -92,6 +95,11 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const reorderDownloads = useCallback(async (ids: string[]) => {
+    const next = await api.reorderDownloads(ids);
+    setDownloads(next);
+  }, []);
+
   const value = useMemo<DownloadsContextValue>(
     () => ({
       downloads,
@@ -100,8 +108,17 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
       pauseDownload,
       resumeDownload,
       removeDownload,
+      reorderDownloads,
     }),
-    [downloads, progress, addDownload, pauseDownload, resumeDownload, removeDownload],
+    [
+      downloads,
+      progress,
+      addDownload,
+      pauseDownload,
+      resumeDownload,
+      removeDownload,
+      reorderDownloads,
+    ],
   );
 
   return (

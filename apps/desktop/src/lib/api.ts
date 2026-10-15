@@ -14,6 +14,8 @@ export const api = {
   pauseDownload: (id: string) => invoke<void>("pause_download", { id }),
   resumeDownload: (id: string) => invoke<void>("resume_download", { id }),
   removeDownload: (id: string) => invoke<void>("remove_download", { id }),
+  reorderDownloads: (ids: string[]) =>
+    invoke<Download[]>("reorder_downloads", { ids }),
   getSettings: () => invoke<Settings>("get_settings"),
   setSettings: (settings: Settings) =>
     invoke<Settings>("set_settings", { settings }),

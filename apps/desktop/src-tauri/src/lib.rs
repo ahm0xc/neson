@@ -11,6 +11,9 @@ use tauri::Manager as _;
 use crate::db::Db;
 use crate::engine::Manager;
 
+const SETTINGS_MAX_ACTIVE: &str = "max_active";
+const DEFAULT_MAX_ACTIVE: u32 = 3;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -26,9 +29,14 @@ pub fn run() {
                 .path()
                 .download_dir()
                 .unwrap_or_else(|_| data_dir.clone());
+            let max_active = db
+                .get_setting(SETTINGS_MAX_ACTIVE)?
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(DEFAULT_MAX_ACTIVE);
 
-            let manager = Manager::new(handle, db, default_dir)?;
-            app.manage(Arc::new(manager));
+            let manager = Arc::new(Manager::new(handle, db, default_dir, max_active)?);
+            app.manage(Arc::clone(&manager));
+            manager.restore()?;
 
             Ok(())
         })
@@ -38,6 +46,7 @@ pub fn run() {
             commands::pause_download,
             commands::resume_download,
             commands::remove_download,
+            commands::reorder_downloads,
             commands::get_settings,
             commands::set_settings,
         ])

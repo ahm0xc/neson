@@ -12,7 +12,6 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { cn } from "cn"
 import type { Download } from "@/lib/bindings/Download"
 import type { DownloadProgress } from "@/lib/bindings/DownloadProgress"
-import type { DownloadStatus } from "@/lib/bindings/DownloadStatus"
 import {
   formatBytes,
   formatDate,
@@ -20,6 +19,7 @@ import {
   formatPercent,
   formatSpeed,
 } from "@/lib/format"
+import { progressStyles, statusLabels, statusStyles } from "@/lib/status"
 
 const archiveExtensions = ["zip", "tar", "gz", "zst", "rar", "7z", "xz", "bz2"]
 const imageExtensions = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "tiff"]
@@ -36,32 +36,6 @@ function fileIconFor(name: string): Icon {
   if (textExtensions.includes(ext)) return FileTextIcon
   if (ext === "pdf") return FilePdfIcon
   return FileIcon
-}
-
-const statusStyles: Record<DownloadStatus, string> = {
-  downloading:
-    "border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400",
-  completed:
-    "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-  paused: "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
-  queued: "border-border bg-muted text-muted-foreground",
-  error: "border-destructive/30 bg-destructive/10 text-destructive",
-}
-
-const statusLabels: Record<DownloadStatus, string> = {
-  downloading: "Downloading",
-  completed: "Completed",
-  paused: "Paused",
-  queued: "Queued",
-  error: "Error",
-}
-
-const progressStyles: Record<DownloadStatus, string> = {
-  downloading: "bg-sky-500",
-  completed: "bg-emerald-500",
-  paused: "bg-amber-500",
-  queued: "bg-muted-foreground/40",
-  error: "bg-destructive",
 }
 
 export function DownloadsTable({

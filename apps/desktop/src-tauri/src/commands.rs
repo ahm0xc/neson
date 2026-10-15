@@ -48,19 +48,15 @@ pub fn add_download(
         status: DownloadStatus::Queued,
         total_bytes: None,
         downloaded_bytes: 0,
+        queue_order: mgr.db().next_queue_order()?,
         added_at: chrono::Utc::now().to_rfc3339(),
         completed_at: None,
         error: None,
     };
 
-    mgr.db().insert_download(&download)?;
-    engine::emit_changed(mgr.app(), Some(download.clone()));
+    mgr.enqueue(&download)?;
 
-    let mgr2 = mgr.clone();
-    let id = download.id.clone();
-    tauri::async_runtime::spawn(async move { engine::start(mgr2, id).await });
-
-    Ok(download)
+    Ok(mgr.db().get_download(&download.id)?.unwrap_or(download))
 }
 
 #[tauri::command]
@@ -69,50 +65,46 @@ pub fn list_downloads(state: State<'_, Arc<Manager>>) -> AppResult<Vec<Download>
 }
 
 #[tauri::command]
-pub fn pause_download(state: State<'_, Arc<Manager>>, id: String) -> AppResult<()> {
-    let mgr = state.inner();
-    mgr.cancel(&id);
-    mgr.db().set_status(&id, DownloadStatus::Paused, None)?;
-    engine::emit_changed(mgr.app(), mgr.db().get_download(&id)?);
-    Ok(())
-}
-
-#[tauri::command]
-pub fn resume_download(state: State<'_, Arc<Manager>>, id: String) -> AppResult<()> {
+pub async fn pause_download(state: State<'_, Arc<Manager>>, id: String) -> AppResult<()> {
     let mgr = state.inner().clone();
-    if mgr.db().get_download(&id)?.is_none() {
-        return Err(AppError::Message("download not found".into()));
-    }
-
-    let mgr2 = mgr.clone();
-    tauri::async_runtime::spawn(async move { engine::start(mgr2, id).await });
-    Ok(())
+    mgr.pause(&id).await
 }
 
 #[tauri::command]
-pub fn remove_download(state: State<'_, Arc<Manager>>, id: String) -> AppResult<()> {
+pub async fn resume_download(state: State<'_, Arc<Manager>>, id: String) -> AppResult<()> {
+    let mgr = state.inner().clone();
+    mgr.resume(&id).await
+}
+
+#[tauri::command]
+pub async fn remove_download(state: State<'_, Arc<Manager>>, id: String) -> AppResult<()> {
+    let mgr = state.inner().clone();
+    mgr.remove(&id).await
+}
+
+#[tauri::command]
+pub fn reorder_downloads(
+    state: State<'_, Arc<Manager>>,
+    ids: Vec<String>,
+) -> AppResult<Vec<Download>> {
     let mgr = state.inner();
-    mgr.cancel(&id);
-
-    if let Some(download) = mgr.db().get_download(&id)? {
-        let final_path = PathBuf::from(&download.dir).join(&download.filename);
-        let _ = std::fs::remove_file(engine::part_path_for(&final_path));
+    for (index, id) in ids.iter().enumerate() {
+        mgr.db().set_queue_order(id, index as i64)?;
     }
-
-    mgr.db().delete_download(&id)?;
-    Ok(())
+    mgr.db().list_downloads()
 }
 
 #[tauri::command]
 pub fn get_settings(state: State<'_, Arc<Manager>>) -> AppResult<Settings> {
     let mgr = state.inner();
-    let db = mgr.db();
 
-    let default_dir = db
+    let default_dir = mgr
+        .db()
         .get_setting(SETTINGS_DEFAULT_DIR)?
         .unwrap_or_else(|| mgr.default_dir().to_string_lossy().into_owned());
 
-    let max_active = db
+    let max_active = mgr
+        .db()
         .get_setting(SETTINGS_MAX_ACTIVE)?
         .and_then(|value| value.parse().ok())
         .unwrap_or(DEFAULT_MAX_ACTIVE);
@@ -124,11 +116,15 @@ pub fn get_settings(state: State<'_, Arc<Manager>>) -> AppResult<Settings> {
 }
 
 #[tauri::command]
-pub fn set_settings(state: State<'_, Arc<Manager>>, settings: Settings) -> AppResult<Settings> {
-    let mgr = state.inner();
+pub fn set_settings(
+    state: State<'_, Arc<Manager>>,
+    settings: Settings,
+) -> AppResult<Settings> {
+    let mgr = state.inner().clone();
     mgr.db()
         .set_setting(SETTINGS_DEFAULT_DIR, &settings.default_dir)?;
     mgr.db()
         .set_setting(SETTINGS_MAX_ACTIVE, &settings.max_active.to_string())?;
+    mgr.set_max_active(settings.max_active);
     Ok(settings)
 }

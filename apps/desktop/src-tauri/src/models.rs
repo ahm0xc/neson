@@ -49,6 +49,7 @@ pub struct Download {
     pub status: DownloadStatus,
     pub total_bytes: Option<i64>,
     pub downloaded_bytes: i64,
+    pub queue_order: i64,
     pub added_at: String,
     pub completed_at: Option<String>,
     pub error: Option<String>,

@@ -6,7 +6,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::error::AppResult;
 use crate::models::{Download, DownloadStatus};
 
-const MIGRATIONS: &str = r#"
+const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS downloads (
     id               TEXT PRIMARY KEY,
     url              TEXT NOT NULL,
@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS downloads (
     status           TEXT NOT NULL,
     total_bytes      INTEGER,
     downloaded_bytes INTEGER NOT NULL DEFAULT 0,
+    queue_order      INTEGER NOT NULL DEFAULT 0,
     added_at         TEXT NOT NULL,
     completed_at     TEXT,
     error            TEXT
@@ -25,6 +26,9 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL
 );
 "#;
+
+const COLUMNS: &str = "id, url, filename, dir, status, total_bytes, downloaded_bytes,
+                       queue_order, added_at, completed_at, error";
 
 pub struct Db {
     conn: Mutex<Connection>,
@@ -44,7 +48,24 @@ impl Db {
 
     fn migrate(&self) -> AppResult<()> {
         let conn = self.conn.lock().unwrap();
-        conn.execute_batch(MIGRATIONS)?;
+        conn.execute_batch(SCHEMA)?;
+
+        if !column_exists(&conn, "downloads", "queue_order")? {
+            conn.execute(
+                "ALTER TABLE downloads ADD COLUMN queue_order INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+
+        conn.execute(
+            "UPDATE downloads SET queue_order = rowid WHERE queue_order = 0",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_downloads_status_order
+             ON downloads(status, queue_order)",
+            [],
+        )?;
         Ok(())
     }
 
@@ -52,8 +73,9 @@ impl Db {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT INTO downloads
-                (id, url, filename, dir, status, total_bytes, downloaded_bytes, added_at, completed_at, error)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                (id, url, filename, dir, status, total_bytes, downloaded_bytes,
+                 queue_order, added_at, completed_at, error)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 d.id,
                 d.url,
@@ -62,6 +84,7 @@ impl Db {
                 d.status.as_str(),
                 d.total_bytes,
                 d.downloaded_bytes,
+                d.queue_order,
                 d.added_at,
                 d.completed_at,
                 d.error,
@@ -72,31 +95,63 @@ impl Db {
 
     pub fn get_download(&self, id: &str) -> AppResult<Option<Download>> {
         let conn = self.conn.lock().unwrap();
-        let dl = conn
+        let download = conn
             .query_row(
-                "SELECT id, url, filename, dir, status, total_bytes, downloaded_bytes,
-                        added_at, completed_at, error
-                 FROM downloads WHERE id = ?1",
+                &format!("SELECT {COLUMNS} FROM downloads WHERE id = ?1"),
                 params![id],
                 row_to_download,
             )
             .optional()?;
-        Ok(dl)
+        Ok(download)
     }
 
     pub fn list_downloads(&self) -> AppResult<Vec<Download>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, url, filename, dir, status, total_bytes, downloaded_bytes,
-                    added_at, completed_at, error
-             FROM downloads ORDER BY added_at DESC, rowid DESC",
-        )?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {COLUMNS} FROM downloads
+             ORDER BY
+                CASE status
+                    WHEN 'downloading' THEN 0
+                    WHEN 'queued'      THEN 1
+                    WHEN 'paused'      THEN 2
+                    ELSE 3
+                END,
+                queue_order ASC,
+                rowid DESC"
+        ))?;
         let rows = stmt.query_map([], row_to_download)?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row?);
         }
         Ok(out)
+    }
+
+    pub fn next_queued(&self) -> AppResult<Option<Download>> {
+        let conn = self.conn.lock().unwrap();
+        let download = conn
+            .query_row(
+                &format!(
+                    "SELECT {COLUMNS} FROM downloads
+                     WHERE status = 'queued'
+                     ORDER BY queue_order ASC, rowid ASC
+                     LIMIT 1"
+                ),
+                [],
+                row_to_download,
+            )
+            .optional()?;
+        Ok(download)
+    }
+
+    pub fn next_queue_order(&self) -> AppResult<i64> {
+        let conn = self.conn.lock().unwrap();
+        let value: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(queue_order), 0) + 1 FROM downloads",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(value)
     }
 
     pub fn set_status(
@@ -136,6 +191,15 @@ impl Db {
         Ok(())
     }
 
+    pub fn set_queue_order(&self, id: &str, order: i64) -> AppResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE downloads SET queue_order = ?2 WHERE id = ?1",
+            params![id, order],
+        )?;
+        Ok(())
+    }
+
     pub fn delete_download(&self, id: &str) -> AppResult<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM downloads WHERE id = ?1", params![id])?;
@@ -165,6 +229,18 @@ impl Db {
     }
 }
 
+fn column_exists(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get("name")?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn row_to_download(row: &rusqlite::Row<'_>) -> rusqlite::Result<Download> {
     let status: String = row.get("status")?;
     Ok(Download {
@@ -175,6 +251,7 @@ fn row_to_download(row: &rusqlite::Row<'_>) -> rusqlite::Result<Download> {
         status: DownloadStatus::from_db(&status),
         total_bytes: row.get("total_bytes")?,
         downloaded_bytes: row.get("downloaded_bytes")?,
+        queue_order: row.get("queue_order")?,
         added_at: row.get("added_at")?,
         completed_at: row.get("completed_at")?,
         error: row.get("error")?,
@@ -192,7 +269,7 @@ mod tests {
         (db, dir)
     }
 
-    fn sample(id: &str) -> Download {
+    fn sample(id: &str, order: i64) -> Download {
         Download {
             id: id.to_string(),
             url: "https://example.com/file.bin".to_string(),
@@ -201,6 +278,7 @@ mod tests {
             status: DownloadStatus::Queued,
             total_bytes: None,
             downloaded_bytes: 0,
+            queue_order: order,
             added_at: "2026-10-14T00:00:00Z".to_string(),
             completed_at: None,
             error: None,
@@ -211,8 +289,8 @@ mod tests {
     fn insert_update_and_list_roundtrip() {
         let (db, dir) = temp_db();
 
-        db.insert_download(&sample("a")).unwrap();
-        db.insert_download(&sample("b")).unwrap();
+        db.insert_download(&sample("a", 1)).unwrap();
+        db.insert_download(&sample("b", 2)).unwrap();
 
         assert_eq!(db.list_downloads().unwrap().len(), 2);
 
@@ -234,6 +312,22 @@ mod tests {
 
         db.delete_download("b").unwrap();
         assert_eq!(db.list_downloads().unwrap().len(), 1);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn next_queued_respects_order() {
+        let (db, dir) = temp_db();
+
+        db.insert_download(&sample("later", 5)).unwrap();
+        db.insert_download(&sample("sooner", 1)).unwrap();
+        db.insert_download(&sample("middle", 3)).unwrap();
+
+        assert_eq!(db.next_queued().unwrap().unwrap().id, "sooner");
+        db.set_status("sooner", DownloadStatus::Downloading, None).unwrap();
+        assert_eq!(db.next_queued().unwrap().unwrap().id, "middle");
+        assert_eq!(db.next_queue_order().unwrap(), 6);
 
         std::fs::remove_dir_all(&dir).ok();
     }

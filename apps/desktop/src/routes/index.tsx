@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import {
+  ArrowDownIcon,
+  ArrowUpIcon,
   GearSixIcon,
   GlobeIcon,
   HandHeartIcon,
@@ -14,6 +16,7 @@ import type { Icon, IconWeight } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { DownloadsTable } from "@/components/downloads-table";
 import { NewUrlDialog } from "@/components/new-url-dialog";
+import { TitleBar } from "@/components/title-bar";
 import { useDownloads } from "@/lib/downloads-store";
 
 export const Route = createFileRoute("/")({
@@ -21,8 +24,14 @@ export const Route = createFileRoute("/")({
 });
 
 function Index() {
-  const { downloads, progress, pauseDownload, resumeDownload, removeDownload } =
-    useDownloads();
+  const {
+    downloads,
+    progress,
+    pauseDownload,
+    resumeDownload,
+    removeDownload,
+    reorderDownloads,
+  } = useDownloads();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [dialogOpen, setDialogOpen] = useState(false);
 
@@ -51,10 +60,7 @@ function Index() {
 
   const handleStop = () => {
     for (const download of selectedDownloads) {
-      if (
-        download.status === "downloading" ||
-        download.status === "queued"
-      ) {
+      if (download.status === "downloading" || download.status === "queued") {
         void pauseDownload(download.id);
       }
     }
@@ -68,8 +74,30 @@ function Index() {
     setSelected(new Set());
   };
 
+  const handleMove = (delta: number) => {
+    const order = downloads.map((download) => download.id);
+    const moving = new Set(selected);
+
+    if (delta < 0) {
+      for (let index = 0; index < order.length; index += 1) {
+        if (!moving.has(order[index]) || index === 0) continue;
+        if (moving.has(order[index - 1])) continue;
+        [order[index - 1], order[index]] = [order[index], order[index - 1]];
+      }
+    } else {
+      for (let index = order.length - 1; index >= 0; index -= 1) {
+        if (!moving.has(order[index]) || index === order.length - 1) continue;
+        if (moving.has(order[index + 1])) continue;
+        [order[index], order[index + 1]] = [order[index + 1], order[index]];
+      }
+    }
+
+    void reorderDownloads(order);
+  };
+
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
+      <TitleBar />
       <ActionBar
         hasSelection={hasSelection}
         canResume={canResume}
@@ -78,6 +106,8 @@ function Index() {
         onResume={handleResume}
         onStop={handleStop}
         onDelete={handleDelete}
+        onMoveUp={() => handleMove(-1)}
+        onMoveDown={() => handleMove(1)}
       />
       <DownloadsTable
         downloads={downloads}
@@ -98,6 +128,8 @@ function ActionBar({
   onResume,
   onStop,
   onDelete,
+  onMoveUp,
+  onMoveDown,
 }: {
   hasSelection: boolean;
   canResume: boolean;
@@ -106,6 +138,8 @@ function ActionBar({
   onResume: () => void;
   onStop: () => void;
   onDelete: () => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
 }) {
   return (
     <div className="flex shrink-0 items-center justify-between border-b px-2 py-1">
@@ -133,6 +167,18 @@ function ActionBar({
           label="Delete"
           disabled={!hasSelection}
           onClick={onDelete}
+        />
+        <ActionButton
+          icon={ArrowUpIcon}
+          label="Up"
+          disabled={!hasSelection}
+          onClick={onMoveUp}
+        />
+        <ActionButton
+          icon={ArrowDownIcon}
+          label="Down"
+          disabled={!hasSelection}
+          onClick={onMoveDown}
         />
       </div>
 

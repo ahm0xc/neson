@@ -7,7 +7,7 @@ use futures_util::StreamExt;
 use tauri::{AppHandle, Emitter};
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
-use tokio::sync::watch;
+use tokio::sync::{Mutex as AsyncMutex, watch};
 
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
@@ -20,20 +20,28 @@ const EMIT_INTERVAL: Duration = Duration::from_millis(250);
 const PERSIST_INTERVAL: Duration = Duration::from_secs(2);
 const PART_PREFIX: &str = ".";
 
+struct Running {
+    cancel: watch::Sender<bool>,
+    gate: Arc<AsyncMutex<()>>,
+}
+
 pub struct Manager {
     app: AppHandle,
     db: Db,
     client: reqwest::Client,
     default_dir: PathBuf,
-    cancels: Mutex<HashMap<String, watch::Sender<bool>>>,
+    max_active: Mutex<u32>,
+    running: Mutex<HashMap<String, Running>>,
 }
 
 impl Manager {
-    pub fn new(app: AppHandle, db: Db, default_dir: PathBuf) -> AppResult<Self> {
+    pub fn new(app: AppHandle, db: Db, default_dir: PathBuf, max_active: u32) -> AppResult<Self> {
         let client = reqwest::Client::builder()
             .cookie_provider(Arc::new(reqwest::cookie::Jar::default()))
             .redirect(reqwest::redirect::Policy::limited(10))
             .user_agent(concat!("Neson/", env!("CARGO_PKG_VERSION")))
+            .connect_timeout(Duration::from_secs(15))
+            .read_timeout(Duration::from_secs(30))
             .build()?;
 
         Ok(Self {
@@ -41,10 +49,12 @@ impl Manager {
             db,
             client,
             default_dir,
-            cancels: Mutex::new(HashMap::new()),
+            max_active: Mutex::new(max_active.max(1)),
+            running: Mutex::new(HashMap::new()),
         })
     }
 
+    #[allow(dead_code)]
     pub fn app(&self) -> &AppHandle {
         &self.app
     }
@@ -61,15 +71,128 @@ impl Manager {
         &self.client
     }
 
-    pub fn cancel(&self, id: &str) {
-        if let Some(tx) = self.cancels.lock().unwrap().get(id) {
-            let _ = tx.send(true);
+    pub fn max_active(&self) -> u32 {
+        *self.max_active.lock().unwrap()
+    }
+
+    pub fn set_max_active(self: &Arc<Self>, value: u32) {
+        *self.max_active.lock().unwrap() = value.max(1);
+        self.pump();
+    }
+
+    pub fn enqueue(self: &Arc<Self>, download: &Download) -> AppResult<()> {
+        self.db.insert_download(download)?;
+        emit_changed(&self.app, Some(download.clone()));
+        self.pump();
+        Ok(())
+    }
+
+    /// Requeue anything that was mid-flight before the app restarted, then start
+    /// as many as the concurrency limit allows.
+    pub fn restore(self: &Arc<Self>) -> AppResult<()> {
+        for download in self.db.list_downloads()? {
+            if download.status == DownloadStatus::Downloading {
+                self.db.set_status(&download.id, DownloadStatus::Queued, None)?;
+                emit_changed(&self.app, self.db.get_download(&download.id)?);
+            }
+        }
+        self.pump();
+        Ok(())
+    }
+
+    /// Start queued downloads until the active limit is reached.
+    pub fn pump(self: &Arc<Self>) {
+        let limit = self.max_active() as usize;
+        let mut running = self.running.lock().unwrap();
+
+        while running.len() < limit {
+            let next = match self.db.next_queued() {
+                Ok(Some(download)) => download,
+                _ => break,
+            };
+
+            let (cancel_tx, cancel_rx) = watch::channel(false);
+            let gate = Arc::new(AsyncMutex::new(()));
+            running.insert(
+                next.id.clone(),
+                Running {
+                    cancel: cancel_tx,
+                    gate: gate.clone(),
+                },
+            );
+
+            if let Err(err) = self.db.set_status(&next.id, DownloadStatus::Downloading, None) {
+                eprintln!("[neson] failed to mark {} downloading: {err}", next.id);
+            }
+            emit_changed(&self.app, self.db.get_download(&next.id).ok().flatten());
+
+            let manager = Arc::clone(self);
+            let id = next.id.clone();
+            tauri::async_runtime::spawn(async move {
+                run_task(manager, id, cancel_rx, gate).await;
+            });
         }
     }
 
-    #[allow(dead_code)]
-    pub fn is_active(&self, id: &str) -> bool {
-        self.cancels.lock().unwrap().contains_key(id)
+    /// Signal the running task (if any) to stop and hand back its gate so the
+    /// caller can wait for it to fully exit before touching shared state.
+    fn take_cancel(&self, id: &str) -> Option<Arc<AsyncMutex<()>>> {
+        let running = self.running.lock().unwrap();
+        running.get(id).map(|entry| {
+            let _ = entry.cancel.send(true);
+            entry.gate.clone()
+        })
+    }
+
+    pub async fn pause(self: &Arc<Self>, id: &str) -> AppResult<()> {
+        let Some(download) = self.db.get_download(id)? else {
+            return Ok(());
+        };
+        if download.status == DownloadStatus::Completed {
+            return Ok(());
+        }
+
+        if let Some(gate) = self.take_cancel(id) {
+            let _guard = gate.lock().await;
+        }
+
+        self.db.set_status(id, DownloadStatus::Paused, None)?;
+        emit_changed(&self.app, self.db.get_download(id)?);
+        self.pump();
+        Ok(())
+    }
+
+    pub async fn resume(self: &Arc<Self>, id: &str) -> AppResult<()> {
+        let Some(download) = self.db.get_download(id)? else {
+            return Ok(());
+        };
+        if download.status == DownloadStatus::Completed {
+            return Ok(());
+        }
+
+        if let Some(gate) = self.take_cancel(id) {
+            let _guard = gate.lock().await;
+        }
+
+        self.db.set_status(id, DownloadStatus::Queued, None)?;
+        emit_changed(&self.app, self.db.get_download(id)?);
+        self.pump();
+        Ok(())
+    }
+
+    pub async fn remove(self: &Arc<Self>, id: &str) -> AppResult<()> {
+        if let Some(gate) = self.take_cancel(id) {
+            let _guard = gate.lock().await;
+        }
+
+        if let Some(download) = self.db.get_download(id)? {
+            let final_path = PathBuf::from(&download.dir).join(&download.filename);
+            let _ = std::fs::remove_file(part_path_for(&final_path));
+        }
+
+        self.db.delete_download(id)?;
+        self.pump();
+        Ok(())
     }
 }
 
@@ -96,49 +219,48 @@ impl From<reqwest::Error> for DlError {
     }
 }
 
-pub async fn start(mgr: Arc<Manager>, id: String) {
-    let (tx, rx) = watch::channel(false);
-    {
-        let mut cancels = mgr.cancels.lock().unwrap();
-        if let Some(old) = cancels.insert(id.clone(), tx) {
-            let _ = old.send(true);
-        }
+async fn run_task(
+    manager: Arc<Manager>,
+    id: String,
+    cancel: watch::Receiver<bool>,
+    gate: Arc<AsyncMutex<()>>,
+) {
+    let guard = gate.lock().await;
+    let outcome = download_task(&manager, &id, cancel).await;
+
+    if let Err(DlError::App(err)) = outcome {
+        eprintln!("[neson] download {id} failed: {err}");
+        let _ = manager
+            .db
+            .set_status(&id, DownloadStatus::Error, Some(&err.to_string()));
+        emit_changed(&manager.app, manager.db.get_download(&id).ok().flatten());
     }
 
-    let result = download_task(&mgr, &id, rx).await;
-    mgr.cancels.lock().unwrap().remove(&id);
-
-    match result {
-        Ok(()) => {}
-        Err(DlError::Cancelled) => {}
-        Err(DlError::App(err)) => {
-            tracing_error(&err);
-            let _ = mgr.db.set_status(&id, DownloadStatus::Error, Some(&err.to_string()));
-            emit_changed(&mgr.app, mgr.db.get_download(&id).ok().flatten());
-        }
-    }
+    drop(guard);
+    manager.running.lock().unwrap().remove(&id);
+    manager.pump();
 }
 
 async fn download_task(
-    mgr: &Manager,
+    manager: &Manager,
     id: &str,
     mut cancel: watch::Receiver<bool>,
 ) -> Result<(), DlError> {
-    let Some(dl) = mgr.db.get_download(id)? else {
+    let Some(download) = manager.db.get_download(id)? else {
         return Ok(());
     };
 
-    let dir = PathBuf::from(&dl.dir);
+    let dir = PathBuf::from(&download.dir);
     tokio::fs::create_dir_all(&dir).await?;
-    let final_path = dir.join(&dl.filename);
+    let final_path = dir.join(&download.filename);
     let part_path = part_path_for(&final_path);
 
     let existing = tokio::fs::metadata(&part_path)
         .await
-        .map(|m| m.len() as i64)
+        .map(|meta| meta.len() as i64)
         .unwrap_or(0);
 
-    let mut request = mgr.client().get(&dl.url);
+    let mut request = manager.client().get(&download.url);
     if existing > 0 {
         request = request.header(reqwest::header::RANGE, format!("bytes={existing}-"));
     }
@@ -155,10 +277,8 @@ async fn download_task(
     let content_len = response.content_length();
     let resumed = existing > 0 && status == reqwest::StatusCode::PARTIAL_CONTENT;
     let start = if resumed { existing } else { 0 };
-    let total = match content_len {
-        Some(len) => Some(start + len as i64),
-        None => None,
-    };
+    let total = content_len.map(|len| start + len as i64);
+
     let mut file = if resumed {
         OpenOptions::new().append(true).open(&part_path).await?
     } else {
@@ -170,9 +290,8 @@ async fn download_task(
             .await?
     };
 
-    mgr.db.set_status(id, DownloadStatus::Downloading, None)?;
-    mgr.db.set_progress(id, start, total)?;
-    emit_changed(&mgr.app, mgr.db.get_download(id).ok().flatten());
+    manager.db.set_progress(id, start, total)?;
+    emit_changed(&manager.app, manager.db.get_download(id).ok().flatten());
 
     let mut downloaded = start;
     let mut stream = response.bytes_stream();
@@ -183,7 +302,7 @@ async fn download_task(
     let mut speed = 0.0_f64;
 
     emit_progress(
-        &mgr.app,
+        &manager.app,
         DownloadProgress {
             id: id.to_string(),
             status: DownloadStatus::Downloading,
@@ -199,7 +318,7 @@ async fn download_task(
             changed = cancel.changed() => {
                 if changed.is_ok() && *cancel.borrow() {
                     file.flush().await?;
-                    mgr.db.set_progress(id, downloaded, total)?;
+                    manager.db.set_progress(id, downloaded, total)?;
                     return Err(DlError::Cancelled);
                 }
             }
@@ -209,6 +328,7 @@ async fn download_task(
                     Some(Ok(bytes)) => {
                         file.write_all(&bytes).await?;
                         downloaded += bytes.len() as i64;
+
                         let now = Instant::now();
                         if now.duration_since(last_emit) >= EMIT_INTERVAL {
                             let elapsed = now.duration_since(last_emit).as_secs_f64().max(0.001);
@@ -222,7 +342,7 @@ async fn download_task(
                                 (speed > 0.0).then(|| ((t - downloaded).max(0) as f64) / speed)
                             });
                             emit_progress(
-                                &mgr.app,
+                                &manager.app,
                                 DownloadProgress {
                                     id: id.to_string(),
                                     status: DownloadStatus::Downloading,
@@ -237,7 +357,7 @@ async fn download_task(
                         }
 
                         if now.duration_since(last_persist) >= PERSIST_INTERVAL {
-                            mgr.db.set_progress(id, downloaded, total)?;
+                            manager.db.set_progress(id, downloaded, total)?;
                             last_persist = now;
                         }
                     }
@@ -261,10 +381,11 @@ async fn download_task(
     let destination = unique_path_async(&final_path).await;
     tokio::fs::rename(&part_path, &destination).await?;
 
-    mgr.db
+    manager
+        .db
         .set_completed(id, downloaded, &chrono::Utc::now().to_rfc3339())?;
     emit_progress(
-        &mgr.app,
+        &manager.app,
         DownloadProgress {
             id: id.to_string(),
             status: DownloadStatus::Completed,
@@ -274,7 +395,7 @@ async fn download_task(
             eta_secs: Some(0.0),
         },
     );
-    emit_changed(&mgr.app, mgr.db.get_download(id).ok().flatten());
+    emit_changed(&manager.app, manager.db.get_download(id).ok().flatten());
 
     Ok(())
 }
@@ -287,10 +408,6 @@ pub fn emit_changed(app: &AppHandle, download: Option<Download>) {
 
 fn emit_progress(app: &AppHandle, progress: DownloadProgress) {
     let _ = app.emit(EVENT_PROGRESS, progress);
-}
-
-fn tracing_error(err: &AppError) {
-    eprintln!("[neson] download failed: {err}");
 }
 
 pub fn part_path_for(final_path: &Path) -> PathBuf {
